@@ -45,21 +45,65 @@
 #include <linux/sched.h>
 #include <linux/kthread.h>
 
+struct container {
+	__u64 cid;
+	struct container_thread* thread; //represent head of thread list
+	struct container* next;
+	struct mutex mylock; //each container will have its own lock, this improves efficiency over global lock mechanism
+} *con_head = NULL;
+
+struct container_thread {
+	pid_t pid;
+	struct task_struct* tsk;
+	struct container_object* object; //represent head of memory object list
+	struct container_thread* next;
+};
+
+struct container_object {
+	__u64 oid;
+	struct vm_area_struct* vma;
+	struct container_object* next;
+};
+
+/**
+This function returns container associated with current task
+**/
+struct container* find_container_of_current_task(void) {
+	struct container* temp = con_head;
+	while(temp) {
+		if(temp->thread->pid == current->pid) //thread found in this container at first position or anywhere after
+			break;
+		temp = temp->next;
+	}
+	return temp;
+}
+
 
 int memory_container_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-    return 0;
+	unsigned long len = vma->vm_end - vma->vm_start;
+	int ret ;
+
+	ret = remap_pfn_range(vma, vma->vm_start, pfn, len, vma->vm_page_prot);
+	if (ret < 0) {
+	    pr_err("could not map the address area\n");
+	    return -EIO;
+	}
 }
 
 
 int memory_container_lock(struct memory_container_cmd __user *user_cmd)
 {
+    container *myContainer = find_container_of_current_task();
+    mutex_lock(&myContainer->mylock);
     return 0;
 }
 
 
 int memory_container_unlock(struct memory_container_cmd __user *user_cmd)
 {
+    container *myContainer = find_container_of_current_task();
+    mutex_unlock(&myContainer->mylock);
     return 0;
 }
 
@@ -72,6 +116,7 @@ int memory_container_delete(struct memory_container_cmd __user *user_cmd)
 
 int memory_container_create(struct memory_container_cmd __user *user_cmd)
 {
+printk(user_cmd->cid);
     return 0;
 }
 
