@@ -82,8 +82,8 @@ void invalidate_memory_objects(struct container* container, pid_t pid) {
 /**
 This function delete single memory object associated with this container.
 **/
-void delete_memory_object(struct container* container, __u64 oid) {
-	if(container->object && container->object->oid == oid) { //at first location
+void delete_memory_object(struct container* container, __u64 oid, pid_t pid) {
+	if(container->object && container->object->oid == oid && container->object->pid == pid) { //at first location
 		struct container_object* temp = container->object;
 		container->object = temp->next;
 		char* mem = temp->mem;
@@ -92,7 +92,7 @@ void delete_memory_object(struct container* container, __u64 oid) {
 	} else {
 		struct container_object* head = container->object;
 		while(head && head->next) {
-			if(head->next->oid == oid) {
+			if(head->next->oid == oid && head->next->pid == pid) {
 				struct container_object* temp = head->next;
 				head->next = head->next->next;
 				char* mem = temp->mem;
@@ -191,7 +191,6 @@ int memory_container_mmap(struct file *filp, struct vm_area_struct *vma)
 
 	struct container_object* myObject = find_memory_object_of_current_task(container, vma->vm_pgoff);
 	if(!myObject) {
-		printk("vma->offset");
 		printk("mmap pgoff: %llu", vma->vm_pgoff);
 		printk("current pid: %llu", current->pid);
 		unsigned long size = vma->vm_end - vma->vm_start;
@@ -225,9 +224,13 @@ int memory_container_mmap(struct file *filp, struct vm_area_struct *vma)
 	} else {
 		printk("object->pid: %llu", myObject->pid);
 		printk("object->oid: %llu", myObject->oid);
-		myObject->pid = current->pid;
 		unsigned long size = vma->vm_end - vma->vm_start;
 		ret = remap_pfn_range(vma, vma->vm_start, myObject->pfn, size, vma->vm_page_prot);
+		if (ret < 0) {
+		    pr_err("could not map the address area\n");
+		    return -EIO;
+		}
+		myObject->pid = current->pid;
 		printk("object->pid: %llu", myObject->pid);
 	}
         return ret;
@@ -236,11 +239,10 @@ int memory_container_mmap(struct file *filp, struct vm_area_struct *vma)
 
 int memory_container_lock(struct memory_container_cmd __user *user_cmd)
 {
-	printk("----------Inside lock --------");
     	struct container* myContainer = find_container_of_current_task();
 	if(myContainer) {
-    		printk("lock mycontainer cid:%llu", myContainer->cid);
     		mutex_lock(&myContainer->mylock);
+    		printk("--------------- lock mycontainer cid:%llu -----------------", myContainer->cid);
 	}
     	return 0;
 }
@@ -248,10 +250,9 @@ int memory_container_lock(struct memory_container_cmd __user *user_cmd)
 
 int memory_container_unlock(struct memory_container_cmd __user *user_cmd)
 {
-	printk("----------Inside unlock --------");
     	struct container* myContainer = find_container_of_current_task();
 	if(myContainer) {
-	    	printk("unlock mycontainer cid:%llu", myContainer->cid);
+	    	printk("-------------- unlock mycontainer cid:%llu -----------------", myContainer->cid);
 	    	mutex_unlock(&myContainer->mylock);
 	}
     	return 0;
@@ -263,6 +264,7 @@ int memory_container_delete(struct memory_container_cmd __user *user_cmd)
 	printk("----------Inside delete --------");
 	struct container* myContainer = find_container_of_current_task(); //finding correct container associated with this thread
 	printk("cid %llu", myContainer->cid);
+	printk("pid: %llu", current->pid);
 	if(myContainer) { //container is not empty
 		mutex_lock(&myContainer->mylock); //attaining lock
 		struct container_thread* thread = myContainer->thread;
@@ -301,20 +303,18 @@ int memory_container_delete(struct memory_container_cmd __user *user_cmd)
 		}*/
 		
 	}
-	
+	printk("----------exit delete --------");
     	return 0;
 }
 
 
 int memory_container_create(struct memory_container_cmd __user *user_cmd)
-{
-	printk("----------Inside create --------");
-	
+{	
 	struct container* myContainer;
 	struct  memory_container_cmd temp;
 	
 	copy_from_user(&temp, user_cmd, sizeof(struct memory_container_cmd));
-	printk("create cid:%llu", (&temp)->cid);
+	printk("------------- create cid:%llu -----------------", (&temp)->cid);
 	
 	//if container head is not null, then finding current container
 	if(con_head) {
@@ -346,31 +346,32 @@ int memory_container_create(struct memory_container_cmd __user *user_cmd)
 	myThread->pid = current->pid;
 	myThread->next = NULL;
 	mutex_lock(&myContainer->mylock);
-
+	printk("----------loc in create --------");
 	//if containers thread is not null
 	if(myContainer->thread) {
 		struct container_thread* temp_thread = myContainer->thread;
 		while(temp_thread && temp_thread->next)
 			temp_thread = temp_thread->next;
 		temp_thread->next = myThread;
+		printk("----------unloc in create --------");
 		mutex_unlock(&myContainer->mylock); //unlocking before sleep
 	} else {
 		myContainer->thread = myThread;
+		printk("----------unloc in create --------");
 		mutex_unlock(&myContainer->mylock);
 	}
-	
+	printk("----------exit create --------");
     return 0;
 }
 
 
 int memory_container_free(struct memory_container_cmd __user *user_cmd)
 {
-	printk("----------Inside free --------");
 	struct  memory_container_cmd temp;
 	copy_from_user(&temp, user_cmd, sizeof(struct memory_container_cmd));
-	printk("free oid:%llu", (&temp)->oid);
+	printk("------------- free oid:%llu ----------------", (&temp)->oid);
 	struct container* myContainer = find_container_of_current_task();
-	delete_memory_object(myContainer, (&temp)->oid); //deleting this memory object
+	delete_memory_object(myContainer, (&temp)->oid, current->pid); //deleting this memory object
     	return 0;
 }
 
