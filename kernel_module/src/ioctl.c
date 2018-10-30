@@ -213,12 +213,12 @@ int memory_container_mmap(struct file *filp, struct vm_area_struct *vma)
 		myObject->pfn = pfn;
 		myObject->next = NULL;
 
-		if(container && container->object) {//object head not null, some objects already present in this list
+		if(container->object) {//object head not null, some objects already present in this list
 			struct container_object* object = container->object;
 			while(object && object->next)
 				object = object->next;
 			object->next = myObject;
-		} else if(container) { //container not null
+		} else {
 			container->object = myObject; //first object in this container
 		}
 	} else {
