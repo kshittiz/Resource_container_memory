@@ -45,6 +45,7 @@
 #include <linux/sched.h>
 #include <linux/kthread.h>
 
+
 struct container {
 	__u64 cid;
 	struct container* next;
@@ -60,39 +61,21 @@ struct container_thread {
 
 struct container_object {
 	__u64 oid;
-	pid_t pid;
+	pid_t pid; //pid 0 means a zombie object
 	char* mem;
+	unsigned long pfn;
 	struct container_object* next;
 };
 
-
 /**
-This function delete all memory objects associated with the given task/thread. Very powerful functionality be careful!!
+This function invalidate all memory objects associated with the given task/thread. Very powerful functionality be careful!!
 **/
-void delete_memory_objects(struct container* container, pid_t pid) {
+void invalidate_memory_objects(struct container* container, pid_t pid) {
 	struct container_object* object = container->object;
-	struct container_object* prev = object;
 	while(object) {
-		if(object->pid == pid && object == prev) {
-			struct container_object* temp = object;
-		 	object = object->next;
-			prev = object;
-			char* mem = temp->mem;
-			ClearPageReserved(virt_to_page(((unsigned long)mem) + temp->oid));
-			kfree(mem);
-			kfree(temp);
-		} else if(object->pid == pid) {
-			struct container_object* temp = object;
-		 	prev->next = object->next;
-			object = prev->next;
-			char* mem = temp->mem;
-			ClearPageReserved(virt_to_page(((unsigned long)mem) + temp->oid));
-			kfree(mem);
-			kfree(temp);
-		} else {
-			prev = object;
-			object = object->next;
-		}
+		if(object->pid == pid)
+			object->pid = 0; //making zombie object by masking pid with 0
+		object = object->next;
 	}
 }
 
@@ -104,7 +87,6 @@ void delete_memory_object(struct container* container, __u64 oid) {
 		struct container_object* temp = container->object;
 		container->object = temp->next;
 		char* mem = temp->mem;
-		ClearPageReserved(virt_to_page((unsigned long)mem + temp->oid));
 		kfree(mem);
 		kfree(temp);
 	} else {
@@ -114,7 +96,6 @@ void delete_memory_object(struct container* container, __u64 oid) {
 				struct container_object* temp = head->next;
 				head->next = head->next->next;
 				char* mem = temp->mem;
-				ClearPageReserved(virt_to_page((unsigned long)mem + temp->oid));
 				kfree(mem);
 				kfree(temp);
 				break;
@@ -190,34 +171,34 @@ struct container* find_my_container(__u64 cid) {
 /**
 This function returns container_object associated with oid provided
 **/
-struct container_object* find_memory_object_of_current_task(__u64 oid) {
-	struct container* temp = con_head;
-	while(temp) { //traversing each container
-		struct container_object* object = temp->object; //for fast lookup this container object has both pid and oid associated, so no need to traverse each thread list
-		while(object) {
-			if(object->pid == current->pid && object->oid == oid) //thread connected to this memory object, so returning this memory object
-			 return object;//returned memory
-			object = object->next;
-		}
-		temp = temp->next;
+struct container_object* find_memory_object_of_current_task(struct container* container, __u64 oid) {
+	struct container_object* object = container->object;
+	while(object) {
+		if(object->oid == oid && (object->pid == current->pid || object->pid == 0)) //thread connected to this memory object, so returning this memory object
+			 break;//found
+		object = object->next; //eventually goes to null
 	}
-	return NULL;//object not found
+	return object;//object not found
 }
 
 
 int memory_container_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	printk("----------Inside mmap --------");
-	struct container_object* myObject = find_memory_object_of_current_task(vma->vm_pgoff);
-	int ret = 0;
+	int ret = -EIO;
+	struct container* container = find_container_of_current_task();
+	if(!container) return ret; //container null
+
+	struct container_object* myObject = find_memory_object_of_current_task(container, vma->vm_pgoff);
 	if(!myObject) {
 		printk("vma->offset");
 		printk("mmap pgoff: %llu", vma->vm_pgoff);
 		printk("current pid: %llu", current->pid);
 		unsigned long size = vma->vm_end - vma->vm_start;
-		printk("mmap len: %llu", size);
-		char* mem = (char*)kmalloc(PAGE_SIZE, GFP_KERNEL);
+
+		char* mem = (char*)kmalloc(size, GFP_KERNEL);
 		printk("mmap mem: %llu", mem);
+
 		unsigned long pfn = virt_to_phys((void *)mem)>>PAGE_SHIFT;
 		printk("mmap pfn: %llu", pfn);
 		ret = remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot);
@@ -225,21 +206,29 @@ int memory_container_mmap(struct file *filp, struct vm_area_struct *vma)
 		    pr_err("could not map the address area\n");
 		    return -EIO;
 		}
-		SetPageReserved(virt_to_page((unsigned long)mem + vma->vm_pgoff));
+
 		myObject = (struct container_object*)kmalloc(sizeof(struct container_object), GFP_KERNEL);
 		myObject->oid = vma->vm_pgoff;
 		myObject->pid = current->pid;
 		myObject->mem = mem;
+		myObject->pfn = pfn;
 		myObject->next = NULL;
-		struct container* con = find_container_of_current_task();
-		if(con && con->object) {//object head not null, some objects already present in this list
-			struct container_object* object = con->object;
+
+		if(container && container->object) {//object head not null, some objects already present in this list
+			struct container_object* object = container->object;
 			while(object && object->next)
 				object = object->next;
 			object->next = myObject;
-		} else if(con) { //container not null
-			con->object = myObject; //first object in this container
+		} else if(container) { //container not null
+			container->object = myObject; //first object in this container
 		}
+	} else {
+		printk("object->pid: %llu", myObject->pid);
+		printk("object->oid: %llu", myObject->oid);
+		myObject->pid = current->pid;
+		unsigned long size = vma->vm_end - vma->vm_start;
+		ret = remap_pfn_range(vma, vma->vm_start, myObject->pfn, size, vma->vm_page_prot);
+		printk("object->pid: %llu", myObject->pid);
 	}
         return ret;
 }
@@ -286,7 +275,7 @@ int memory_container_delete(struct memory_container_cmd __user *user_cmd)
 				} else {
 					myContainer->thread = NULL;
 				}
-				//delete_memory_objects(myContainer, curr->pid);
+				invalidate_memory_objects(myContainer, curr->pid); //making all remaining objects zombies
 				kfree(curr);
 		} else if(thread) {
 		 	while(thread && thread->next) {
@@ -294,7 +283,7 @@ int memory_container_delete(struct memory_container_cmd __user *user_cmd)
 					struct container_thread* toDelete = thread->next;
 					thread->next = thread->next->next;
 					printk("deleting thread %llu", toDelete->pid);
-					//delete_memory_objects(myContainer, toDelete->pid);
+					invalidate_memory_objects(myContainer, toDelete->pid); //making all remaining objects zombies
 					kfree(toDelete);
 					break;	
 				}
@@ -303,11 +292,13 @@ int memory_container_delete(struct memory_container_cmd __user *user_cmd)
 		}  
 
 
+		mutex_unlock(&myContainer->mylock);
+		/*
 		if(!myContainer->thread) { //if container becomes empty then delete it too
 				delete_container(myContainer->cid); //lock will be released by this function
 		} else {
 				mutex_unlock(&myContainer->mylock);
-		}
+		}*/
 		
 	}
 	
