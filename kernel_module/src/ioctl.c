@@ -1,5 +1,3 @@
-// Project 2: Kshittiz Kumar, 1st member's Unity: kkumar4; 2nd member's name:Jubin Thykattil, 2nd member's Unity ID :jajubina
-
 //////////////////////////////////////////////////////////////////////
 //                      North Carolina State University
 //
@@ -46,6 +44,8 @@
 #include <linux/mutex.h>
 #include <linux/sched.h>
 #include <linux/kthread.h>
+
+// Project 2: Kshittiz Kumar, 1st member's Unity: kkumar4; 2nd member's name:Jubin Thykattil, 2nd member's Unity ID :jajubina
 
 static DEFINE_MUTEX(lock);
 
@@ -98,7 +98,7 @@ void delete_memory_object(struct container* container, __u64 oid) {
 }
 
 /**
-This function deletes container based on cid provided and free its memory
+This function deletes container based on cid provided and free its memory. Although not used!!
 **/
 void delete_container(__u64 cid) {
 	struct container* temp = con_head;
@@ -262,7 +262,9 @@ int memory_container_delete(struct memory_container_cmd __user *user_cmd)
 		}  
 
 
-		mutex_unlock(&myContainer->mylock);
+		mutex_unlock(&myContainer->mylock); //unlocking
+		
+		//Container not deleted!
 		/*
 		if(!myContainer->thread) { //if container becomes empty then delete it too
 				delete_container(myContainer->cid); //lock will be released by this function
