@@ -181,7 +181,7 @@ int memory_container_mmap(struct file *filp, struct vm_area_struct *vma)
 	struct container_object* myObject = find_memory_object_of_current_task(container, offset);
 	if(!myObject) {
 		unsigned long size = vma->vm_end - vma->vm_start;
-		char* mem = (char*)kmalloc(size, GFP_KERNEL);
+		char* mem = (char*)kcalloc(1, size, GFP_KERNEL);
 		unsigned long pfn = virt_to_phys((void *)mem)>>PAGE_SHIFT;
 		ret = remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot);
 		if (ret < 0) {
